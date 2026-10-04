@@ -1,0 +1,38 @@
+🗺️ Project Roadmap (Zero to Final Dashboard)
+Neeche 5 stages di gayi hain. Hum ek-ek karke inko execute karenge:
+
+Phase 1: Environment Setup & Raw Data Generation (AWS Config + S3)
+Kya karenge:
+
+AWS Console mein ek S3 Bucket banayenge jo hamara central storage (Data Lake landing zone) banega.
+
+AWS mein AWS Config service ko enable karenge. AWS Config automatic hamare resources (jaise S3, EC2) ko track karega ki kismein security compliance missing hai (jaise encryption off hona).
+
+AWS Config yeh saari compliance reports automatically hamare banaye gaye S3 bucket mein dump (export) karega.
+
+Phase 2: Data Lake & Storage Layer (S3 Folders Organization)
+Kya karenge:
+S3 bucket ke andar do folders banayenge:
+
+/raw-logs: Jahan AWS Config se aane wala ganda (unprocessed) data aayega.
+
+/processed-data: Jahan hamara saaf kiya hua data save hoga.
+
+Phase 3: Data Cleaning & Filtering (Amazon Athena + SQL)
+Kya karenge:
+
+Amazon Athena ko S3 bucket ke sath connect karenge (AWS Glue Data Catalog ka use karke table banayenge).
+
+Ek SQL query likhenge jo /raw-logs ko padhegi, usme se noise (jaise test servers, duplicate rows, ya false positives) ko filter out karegi, aur sirf active non-compliant records ko /processed-data folder mein save kar degi.
+
+Phase 4: Downstream Serving & Ticket Simulation
+Kya karenge:
+Processed data ko simulate karenge ki kaise yeh IT Support team ke paas ticketing system ke liye jata hai (jaise clean CSV/Excel output ya S3-backed view).
+
+Phase 5: Real-Time Dashboard (Amazon QuickSight)
+Kya karenge:
+
+Amazon QuickSight ko connect karenge hamare processed dataset se.
+
+Ek interactive dashboard banayenge (jaise bar charts, non-compliance count by resource type) jo real-time mein dikhayega ki kis-kis system par IT team ko ticket close karni hai.
+
