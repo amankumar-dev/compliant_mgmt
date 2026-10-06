@@ -36,3 +36,110 @@ Amazon QuickSight ko connect karenge hamare processed dataset se.
 
 Ek interactive dashboard banayenge (jaise bar charts, non-compliance count by resource type) jo real-time mein dikhayega ki kis-kis system par IT team ko ticket close karni hai.
 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+| Stage | What we'll learn        | AWS                                      |
+| ----- | ----------------------- | ---------------------------------------- |
+| 0     | Project setup           | IAM, S3, CLI, Boto3                      |
+| 1     | Data ingestion          | S3 + SSM + Config + Inspector            |
+| 2     | Raw/Bronze data         | S3                                       |
+| 3     | Cleaning & filtering    | Python/Pandas + Athena                   |
+| 4     | Compliance gap analysis | Athena + Config Rules                    |
+| 5     | Remediation workflow    | SSM Automation / CSV                     |
+| 6     | Dashboard               | QuickSight                               |
+| 7     | Audit & automation      | CloudTrail + S3 + EventBridge/Glue later |
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+aws-enterprise-compliance-data-pipeline/
+│
+├── data/
+│   ├── raw/
+│   ├── processed/
+│   └── output/
+│
+├── scripts/
+│   ├── upload_raw_data.py
+│   ├── clean_compliance_data.py
+│   ├── generate_remediation.py
+│   └── generate_report.py
+│
+├── sql/
+│   ├── 01_create_database.sql
+│   ├── 02_create_tables.sql
+│   ├── 03_active_assets.sql
+│   ├── 04_non_compliant_assets.sql
+│   ├── 05_gap_analysis.sql
+│   └── 06_management_metrics.sql
+│
+├── aws/
+│   ├── iam/
+│   ├── config/
+│   ├── ssm/
+│   └── inspector/
+│
+├── dashboards/
+│
+├── reports/
+│
+├── docs/
+│   ├── architecture.md
+│   ├── business_logic.md
+│   └── interview_notes.md
+│
+├── requirements.txt
+├── .gitignore
+└── README.md
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Standard daily flow
+S3 RAW
+ ↓
+Glue/Python
+ ↓
+Athena
+ ↓
+Filtering
+ ↓
+Gold
+ ↓
+QuickSight
+Automation
+EventBridge
+     ↓
+Lambda / Glue
+     ↓
+Processing
+But exception path:
+Data Quality Failure
+       ↓
+CloudWatch
+       ↓
+SNS
+       ↓
+Manual Investigation
+       ↓
+Athena SQL
+       ↓
+Correct / reprocess
+Audit path:
+Audit Request
+      ↓
+Athena SQL
+      ↓
+Specific dataset
+      ↓
+S3 report
+      ↓
+Share with requesting team
+Remediation path:
+Non-compliant asset
+       ↓
+Actionable queue
+       ↓
+IT Team
+       ↓
+Remediation
+       ↓
+Re-check
