@@ -1,0 +1,48 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+.aws/
+*credentials*
+*secret*
+*.pem
+*.key
+
+# Local editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Generated pipeline output
+data/processed/*
+data/output/*
+reports/generated/*
+!data/processed/.gitkeep
+!data/output/.gitkeep
+
+# Airflow runtime files
+airflow/logs/
+airflow/airflow.db
+airflow/webserver_config.py
+
+# Local query and build artifacts
+athena-results/
+*.parquet
+*.tmp
