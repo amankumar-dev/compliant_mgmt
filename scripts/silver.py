@@ -164,3 +164,123 @@ def add_reason(df,mask,reason):
         )
 
 # Asset details cleaning
+def clean_assets(raw):
+    df=raw.copy()
+    
+    required = [
+        "asset_id", "employee_id", "employee_email",
+        "employee_name", "department", "location",
+        "device_type", "device_model", "os_version",
+        "employee_status", "asset_status",
+        "assignment_date", "return_date", "exit_date",
+        "asset_notes",
+    ]
+    
+    require_column(df,required,'asset_details')
+    
+    df['quarantine_reason']=pd.NA
+    df = df.replace(r"^\s*$", pd.NA, regex=True)
+    
+    normalise_ids(df,['asset_id','employee_id'])
+    
+    for col in ["assignment_date", "return_date", "exit_date"]:
+        df[col]=pd.to_datetime(df[col],errors='coerce',format='%Y-%m-%d')
+        
+    missing_id=df['asset_id'].isna()
+    add_reason(df,missing_id,'MISSING_ASSET_ID')
+    
+    quarantine=df[missing_id].copy()
+    valid=df[~missing_id].copy()
+    
+    duplicate_mask=valid.duplicated('asset_id',keep=False)
+    duplicate_rows=valid[duplicate_mask].copy()
+    
+    if not duplicate_rows.empty:
+        duplicate_rows['quarantine_reason']=("DUPLICATE_ASSET_ID_REQUIRES_REVIEW")
+        quarantine=pd.concat(quarantine,duplicate_rows,ignore_index=True)
+        
+    valid=valid.drop_duplicates('asset_id',keep='first')
+    return valid,quarantine
+
+# Compliance details cleaning
+def clean_compliance(raw):
+    df=raw.copy()
+    
+    required = [
+        "asset_id", "employee_id", "source_system",
+        "last_check_date", "bitlocker_status",
+        "antivirus_status", "patch_status", "dlp_status",
+        "proxy_status", "device_health", "overall_compliance",
+        "primary_issue", "action_required", "compliance_notes",
+    ]
+    require_column(df,required,'compliance_status')
+    
+    df['quarantine_reason']=pd.NA
+    df = df.replace(r"^\s*$", pd.NA, regex=True)
+    
+    normalise_ids(df,['asset_id','employee_id'])
+    
+    df['last_check_date']=pd.to_datetime(df['last_check_date'],errors='coerce',format="%Y-%m-%d")
+    
+    for col,allow in ALLOWED.items():
+        df[col]=standarise_status(df[col],allow)
+    
+    missing_id=df['asset_id'].isna()
+    invalid_date=df['last_check_date'].isna()
+    
+    add_reason(df,missing_id,'MISSING_ASSET_ID')
+    add_reason(df,invalid_date,'INVALID_OR_MISSING_CHECK_DATE')
+    
+    bad=missing_id | invalid_date
+    quarantine=df[bad].copy()
+    valid=df[~bad].copy()
+    
+    duplicate_mask=valid.duplicated('asset_id',keep=False)
+    duplicate_rows=valid[duplicate_mask].copy()
+    
+    if not duplicate_rows.empty:
+        duplicate_rows['quarantine_reason']=('"DUPLICATE_COMPLIANCE_ASSET_REQUIRES_REVIEW"')
+        quarantine=pd.concat(quarantine,duplicate_rows,ignore_index=True)
+        
+    valid=valid.sort_values('last_check_date',keep='stable').drop_duplicates('asset_id',keep='last')
+    
+    failed=pd.DataFrame(index=valid.index)
+    unknown=pd.DataFrame(index=valid.index)
+    
+    for col,expected in PASS.items():
+        value=valid[col].astype('string').str.lower()
+        
+        unknown[col]=(value.isna() | value.isin(UNKNOWN_VALUES))
+        
+        failed[col]=(value.notna() & ~value.isin(UNKNOWN_VALUES) & value.ne(expected.lower()))
+        
+        valid['failed_checks']=failed.sum(axis=1).astype(int)
+        valid['unknown_checks']=failed.sum(axis=1).astype(int)
+        
+        critical=(valid['device_health'].astype('string').str.lower().eq('critical').fillna(False))
+        
+        valid['recomputed_compliance']=np.select(
+            [valid['failed_checks'].gt(0),valid['unknown_checks'].gt(0)],
+            ['Non-Compliant','Needs Review'],
+            default='Compliant'
+        )
+        
+        valid['flag_mismatch']=(
+            valid['recomputed_compliance'].isin(['Compliant','Non-Compliant'])
+            & valid['overall_compliance'].isin(['Compliant','Non-Compliant'])
+            & valid['recomputed_compliance'].ne(valid['overall_compliance'])
+        )
+        
+        valid['priority']=np.select([
+            critical | valid['failed_checks'].ge(3),
+            valid['failed_checks'].eq(2),
+            valid['failed_checks'].eq(1),
+            valid['unknown_checks'].gt(0)
+        ],['P1','P2','P3','P4'],default=None)
+        
+        return valid,quarantine
+    
+    
+    
+    
+    
