@@ -280,6 +280,123 @@ def clean_compliance(raw):
         
         return valid,quarantine
     
+# Service now and compliance reconcilliation
+def apply_rules(assets,compliance):
+    a=assets.copy()
+    c=compliance.copy()
+    
+    a=a.rename(columns={'employee_id':'snow_employee_id'})
+    c=c.rename(columns={'employee_id':'intune_employee_id'})
+    
+    asset_meta={
+        'bronze_key':'asset_bronze_key',
+        'bronze_batch_id':'asset_bronze_batch_id'
+    }
+    comp_meta={
+        'bronze_key':'compliance_bronze_key',
+        'bronze_batch_id':'compliance_bronze_batch_id'
+    }
+    
+    a=a.rename(columns=asset_meta)
+    c=c.rename(columns=comp_meta)
+    
+    j=a.merge(
+        c,
+        on='asset_id',
+        how='outer',
+        indicator=True,
+        validate='one_to_one',
+        suffixes=('_asset','_compliance')
+    )
+    j['record_presence']=j['_merge'].map({
+        'left_only':'SERVICENOW_ONLY',
+        'both':'BOTH_SOURCES',
+        'right_only':'COMPLIANCE_ONLY'
+    })
+    j=j.drop(columns=['_merge'])
+    
+    asset_status=j['asset_status'].astype('string').str.strip().str.lower()
+    employee_status=j['employee_status'].astype('string').str.strip().str.lower()
+    
+    inactive=asset_status.isin(INACTIVE_STATUSES).fillna(False)
+    asset_exists=j['record_presence'].ne('COMPLIANCE_ONLY')
+    comp_exists=j['record_presence'].ne('SERVICENOW_ONLY')
+    
+    snow_pairs=j.loc[asset_exists & j['asset_id'].notna() & j['snow_employee_id'].notna(),['asset_id','snow_employee_id']].drop_duplicates()
+    
+    asset_by_employee=(
+        snow_pairs.groupby('snow_employee_id')['asset_id']
+        .agg(set)
+        .to_dict()
+    )
+    
+    expected_assets=j['intune_employee_id'].map(asset_by_employee)
+    
+    employee_has_snow_asset=expected_assets.map(
+        lambda x: isinstance(x,set) and len(x)>0
+    )
+    
+    compliance_asset_not_assigned_to_employee=(
+        employee_has_snow_asset
+        & ~j.apply(
+            lambda x:(
+                x['asset_id'] in asset_by_employee.get(x['intune_employee_id'],set())
+                if pd.notna(x['intune_employee_id'])
+                and pd.notna(x['asset_id'])
+                else False
+            ),axis=1
+        )
+    )
+    
+    employee_conflict_on_same_asset=(
+        j['snow_employee_id'].notna()
+        & j['intune_employee_id'].notna()
+        & j['snow_employee_id'].ne(j['intune_employee_id'])
+    )
+    
+    mismatch=(
+        comp_exists
+        & ~inactive
+        & (employee_conflict_on_same_asset | compliance_asset_not_assigned_to_employee)
+    ).fillna(False)
+    
+    exited=(
+        asset_exists
+        & employee_status.eq('exited').fillna(False)
+        & ~inactive
+    )
+    
+    no_owner=(
+        asset_exists
+        & j['snow_employee_id'].isna()
+        & ~inactive
+    )
+    
+    compliance_only=j['record_presence'].eq('COMPLIANCE_ONLY')
+    no_compliance=j['record_presence'].eq('SERVICENOW_ONLY')
+    
+    snapshot_date=pd.Timestamp(DT)
+    j['days_since_check']=(snapshot_date-j['last_check_date']).dt.days
+    
+    stale=(
+        comp_exists
+        & j['last_check_date'].notna()
+        & j['last_check_date'].gt(STALE_DAYS)
+    ).fillna(False)
+    
+    confirmed_nc=j['recomputed_compliance'].eq('Non-Compliant').fillna(False)
+    
+    unknown_controls=j['recomputed_compliance'].eq('Needs Review').fillna(False)
+    
+    j['device_status']=np.select(
+        [inactive,asset_exists & ~no_owner,no_owner,compliance_only],
+        ['Inactive','Active','Unassigned','Not found in Servicenow'],
+        default='Unknown'
+    )
+    
+    
+    
+    
     
     
     
