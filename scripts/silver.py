@@ -394,10 +394,109 @@ def apply_rules(assets,compliance):
         default='Unknown'
     )
     
+    j['outcome']=np.select(
+        [inactive,mismatch,exited,no_owner,compliance_only,no_compliance,stale,confirmed_nc,unknown_controls],
+        ['INACTIVE_DEVICE','ASSET_ID_MISMATCH','EXITED_LAPTOP_RECOVERY','REVIEW_NO_OWNER','MISSING_IN_SERVICENOW','UNMANAGED_REVIEW','STALE_REVALIDATE','REMEDIATE','REVIEW_UNKNOWN_CONTROLS'],
+        default='COMPLIANT'
+    )
     
+    excluded_outcomes={"INACTIVE_DEVICE","ASSET_ID_MISMATCH","EXITED_LAPTOP_RECOVERY","REVIEW_NO_OWNER","MISSING_IN_SERVICENOW","UNMANAGED_REVIEW","STALE_REVALIDATE","REVIEW_UNKNOWN_CONTROLS",}
     
+    j['kpi_status']=np.where(j['outcome'].isin(excluded_outcomes),'Excluded',j['recomputed_compliance'].fillna('Excluded'))
     
+    j['on_leave']=employee_status.eq('on leave').fillna(False)
     
+    source_action=j['action_required'].astype('string').str.lower().str.strip()
     
+    j["source_flag_check"] = np.select(
+        [
+            source_action.eq("yes")
+            & j["failed_checks"].eq(0)
+            & j["unknown_checks"].eq(0)
+            & ~inactive,
+
+            source_action.eq("no")
+            & j["failed_checks"].gt(0)
+            & ~inactive,
+
+            source_action.eq("yes")
+            & j["unknown_checks"].gt(0)
+            & j["failed_checks"].eq(0)
+            & ~inactive,
+        ],
+        [
+            "FALSE_POSITIVE_CANDIDATE",
+            "FALSE_NEGATIVE_CANDIDATE",
+            "REVIEW_SOURCE_FLAG",
+        ],
+        default="NO_FLAG_DISCREPANCY",
+    )
+    
+    j['processing_date']=DT
+    j['processing_ts']=datetime.now(timezone.utc).isoformat()
+    j['silver_run_id']=str(uuid.uuid4())
+    
+    return j
+
+# Data quality report
+def build_data_quality_report(assets,compliance):
+    rows=[]
+    
+    checks=[
+        (
+            "asset_details",
+            "asset_id",
+            assets["asset_id"].isna(),
+            "MISSING_ASSET_ID",
+        ),
+        (
+            "asset_details",
+            "employee_id",
+            assets["employee_id"].isna(),
+            "MISSING_EMPLOYEE_ID",
+        ),
+        (
+            "compliance_status",
+            "asset_id",
+            compliance["asset_id"].isna(),
+            "MISSING_ASSET_ID",
+        ),
+        (
+            "compliance_status",
+            "employee_id",
+            compliance["employee_id"].isna(),
+            "MISSING_EMPLOYEE_ID",
+        ),
+    ]
+    
+    for source,column,mask,issue in checks:
+        rows.append({
+            'source':source,
+            "column_name":column,
+            'issue':issue,
+            'issue_count':int(mask.sum()),
+            'processing_date':DT
+        })
+        
+    for col,allowed in ALLOWED.items():
+        if col not in compliance.columns:
+            continue
+        value=compliance[col].astype('string')
+        invalid=(
+            value.notna()
+            & ~value.str.lower().isin(v.lower() for v in allowed)
+        )
+        
+        rows.append({
+            "source": "compliance_status",
+            "column_name": col,
+            "issue": "UNRECOGNISED_STATUS_VALUE",
+            "issue_count": int(invalid.sum()),
+            "processing_date": DT,
+        })
+
+    return pd.DataFrame(rows)
+
+
     
     
