@@ -6,54 +6,6 @@ import numpy as np
 import pandas as pd
 from botocore.exceptions import ClientError
 
-"""
-D:\Aman\aman.code\dataengproject\compliance_pipeline_aws>python -m scripts.silver
-=================================================================
-SILVER LAYER STARTED
-Bucket: amandataeng-compliance-de-2026
-Snapshot date: 2026-10-06
-=================================================================
-Read: s3://amandataeng-compliance-de-2026/bronze/asset_details/dt=2026-10-06/asset_details.parquet
-Rows: 1,200
-Read: s3://amandataeng-compliance-de-2026/bronze/compliance_details/dt=2026-10-06/compliance_details.parquet
-Rows: 1,201
-Clean asset rows: 1,200
-Clean compliance rows: 1,200
-Asset quarantine rows: 0
-Compliance quarantine rows: 2
-Written: s3://amandataeng-compliance-de-2026/silver/asset_clean/dt=2026-10-06/asset_clean.parquet | rows=1,200
-Written: s3://amandataeng-compliance-de-2026/silver/compliance_clean/dt=2026-10-06/compliance_clean.parquet | rows=1,200
-Written: s3://amandataeng-compliance-de-2026/silver/compliance_enriched/dt=2026-10-06/compliance_enriched.parquet | rows=1,200
-Written: s3://amandataeng-compliance-de-2026/silver/asset_id_mismatch/dt=2026-10-06/asset_id_mismatch.parquet | rows=4
-Written: s3://amandataeng-compliance-de-2026/silver/exceptions/dt=2026-10-06/exceptions.parquet | rows=1,200
-Written: s3://amandataeng-compliance-de-2026/silver/data_quality/dt=2026-10-06/data_quality.parquet | rows=12
-Written: s3://amandataeng-compliance-de-2026/silver/quarantine/asset_details/dt=2026-10-06/quarantine.parquet | rows=0
-Written: s3://amandataeng-compliance-de-2026/silver/quarantine/compliance_status/dt=2026-10-06/quarantine.parquet | rows=2
-
-=================================================================
-SILVER LAYER COMPLETED
-=================================================================
-
-Outcome counts:
-outcome
-STALE_REVALIDATE          1188
-INACTIVE_DEVICE              6
-ASSET_ID_MISMATCH            4
-EXITED_LAPTOP_RECOVERY       2
-
-KPI status counts:
-kpi_status
-Excluded    1200
-
-Asset mismatches for Ground IT: 4
-Exception rows: 1,200
-
-Next step: validate the Silver outputs before Gold.
-
-D:\Aman\aman.code\dataengproject\compliance_pipeline_aws>
-"""
-
-
 # Configuration
 BUCKET="amandataeng-compliance-de-2026"
 
@@ -165,13 +117,13 @@ def write_silver(df,key):
     
 # Common data cleaning
 def normalise_text(series):
-    result=series.astype('string').str.strip()
-    result=result.mask(result.eq(""))
+    result=series.astype('string').str.strip()      # convert into string and remove white space
+    result=result.mask(result.eq(""))               # convert blank string into null
     return result
 
 def normalise_ids(df,columns):
     for col in columns:
-        df[col]=normalise_text(df[col]).str.upper()
+        df[col]=normalise_text(df[col]).str.upper()     #convert emptry string into null and uppercase
         
 def standarise_status(series,allowed):
     result=normalise_text(series)
