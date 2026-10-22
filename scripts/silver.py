@@ -410,9 +410,29 @@ def apply_rules(assets,compliance):
         default='COMPLIANT'
     )
     
-    excluded_outcomes={"INACTIVE_DEVICE","ASSET_ID_MISMATCH","EXITED_LAPTOP_RECOVERY","REVIEW_NO_OWNER","MISSING_IN_SERVICENOW","UNMANAGED_REVIEW","STALE_REVALIDATE","REVIEW_UNKNOWN_CONTROLS",}
-    
-    j['kpi_status']=np.where(j['outcome'].isin(excluded_outcomes),'Excluded',j['recomputed_compliance'].fillna('Excluded'))
+    excluded_outcomes = {"INACTIVE_DEVICE","ASSET_ID_MISMATCH","EXITED_LAPTOP_RECOVERY","REVIEW_NO_OWNER","MISSING_IN_SERVICENOW","UNMANAGED_REVIEW","STALE_REVALIDATE","REVIEW_UNKNOWN_CONTROLS",}
+
+    j["kpi_status"] = np.select(
+        [
+            j["outcome"].isin([
+                "INACTIVE_DEVICE",
+                "ASSET_ID_MISMATCH",
+                "EXITED_LAPTOP_RECOVERY",
+                "REVIEW_NO_OWNER",
+                "MISSING_IN_SERVICENOW",
+                "UNMANAGED_REVIEW",
+                "REVIEW_UNKNOWN_CONTROLS",
+            ]),
+            j["recomputed_compliance"].eq("Compliant"),
+            j["recomputed_compliance"].eq("Non-Compliant"),
+        ],
+        [
+            "Excluded",
+            "Compliant",
+            "Non-Compliant",
+        ],
+        default="Excluded",
+    )
     
     j['on_leave']=employee_status.eq('on leave').fillna(False)
     

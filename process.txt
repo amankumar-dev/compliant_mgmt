@@ -146,5 +146,5 @@ Re-check
 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-Check connection aws -> s3 bucket create and upload raw file -> bronze layer(read raw file and then add metadata and upload bronze file) -> silver layer(get latest file key and then read that file add metadata then convert it into parquet and upload silver file after transformation) -> athena setup -> 
+Check connection aws -> s3 bucket create and upload raw file -> bronze layer(read raw file and then add metadata and upload bronze file) -> silver layer(get latest file key and then read that file add metadata then convert it into parquet and upload silver file after transformation) -> athena setup -> silver validation -> 
 

@@ -1,0 +1,244 @@
+
+import pandas as pd
+
+FILE = "data/compliance_enriched.parquet"
+
+df = pd.read_parquet(FILE)
+
+print("=" * 55)
+print("SILVER DATA INTEGRITY VALIDATION")
+print("=" * 55)
+
+print("\n1. Total records:", len(df))
+
+print("\n2. Duplicate asset IDs:")
+print("Duplicate rows:", df["asset_id"].duplicated().sum())
+
+print("\n3. Missing asset IDs:")
+print(df["asset_id"].isna().sum())
+
+print("\nActual columns in enriched Parquet:")
+print(df.columns.tolist())
+
+print("\n5. Missing values in important columns:")
+columns = [
+    "asset_id",
+    "employee_id",
+    "recomputed_compliance",
+    "failed_checks",
+    "unknown_checks",
+    "outcome",
+    "kpi_status",
+]
+
+for col in columns:
+    if col in df.columns:
+        print(f"{col}: {df[col].isna().sum()}")
+
+print("\n6. Negative check counts:")
+for col in ["failed_checks", "unknown_checks"]:
+    if col in df.columns:
+        print(f"{col}: {(df[col] < 0).sum()}")
+
+print("\n7. Compliance classification:")
+print(df["recomputed_compliance"].value_counts(dropna=False))
+
+print("\n8. Outcome distribution:")
+print(df["outcome"].value_counts(dropna=False))
+
+print("\n9. KPI distribution:")
+print(df["kpi_status"].value_counts(dropna=False))
+
+print("\n10. Duplicate rows by asset ID (sample):")
+duplicates = df[df["asset_id"].duplicated(keep=False)]
+
+if duplicates.empty:
+    print("No duplicate asset IDs found.")
+else:
+    cols = [
+        c for c in [
+            "asset_id",
+            "employee_id",
+            "outcome",
+            "kpi_status",
+        ] if c in df.columns
+    ]
+    print(duplicates[cols].head(20).to_string(index=False))
+
+print("\nVALIDATION CHECK FINISHED")
+
+
+print("\n11. Local KPI vs outcome check:")
+
+print(
+    pd.crosstab(
+        df["outcome"],
+        df["kpi_status"],
+        dropna=False,
+    )
+)
+
+print("\n12. Employee identifier null counts:")
+
+for col in ["snow_employee_id", "intune_employee_id"]:
+    print(f"{col}: {df[col].isna().sum()}")
+
+print("\n13. Local file metadata:")
+
+print("File:", FILE)
+print("Rows:", len(df))
+print("Columns:", len(df.columns))
+
+
+print("\n14. Records with missing ServiceNow employee ID:")
+
+missing_employee = df[df["snow_employee_id"].isna()]
+
+cols = [
+    "asset_id",
+    "snow_employee_id",
+    "intune_employee_id",
+    "employee_name",
+    "employee_status",
+    "asset_status",
+    "outcome",
+    "kpi_status",
+]
+
+cols = [col for col in cols if col in df.columns]
+
+if missing_employee.empty:
+    print("No missing ServiceNow employee IDs.")
+else:
+    print(missing_employee[cols].to_string(index=False))
+
+
+print("\n15. Inactive asset rule validation:")
+
+inactive_statuses = {
+    "detagged",
+    "returned",
+    "decommissioned",
+}
+
+inactive = df[
+    df["asset_status"]
+    .astype("string")
+    .str.strip()
+    .str.lower()
+    .isin(inactive_statuses)
+]
+
+print("Inactive asset records:", len(inactive))
+
+print("\nInactive asset status distribution:")
+print(inactive["asset_status"].value_counts(dropna=False))
+
+print("\nInactive asset outcomes:")
+print(
+    pd.crosstab(
+        inactive["asset_status"],
+        inactive["outcome"],
+        dropna=False,
+    )
+)
+
+print("\nInactive assets incorrectly marked for remediation:")
+bad_inactive = inactive[inactive["outcome"].eq("REMEDIATE")]
+
+print("Count:", len(bad_inactive))
+
+if not bad_inactive.empty:
+    print(
+        bad_inactive[
+            ["asset_id", "asset_status", "outcome", "kpi_status"]
+        ].head(20).to_string(index=False)
+    )
+
+
+print("\n16. Asset ID mismatch validation:")
+
+mismatch = df[df["outcome"].eq("ASSET_ID_MISMATCH")]
+
+print("Mismatch records:", len(mismatch))
+
+cols = [
+    "asset_id",
+    "snow_employee_id",
+    "intune_employee_id",
+    "employee_status",
+    "asset_status",
+    "outcome",
+    "kpi_status",
+]
+
+cols = [col for col in cols if col in df.columns]
+
+if mismatch.empty:
+    print("No asset mismatches found.")
+else:
+    print(mismatch[cols].to_string(index=False))
+
+print("\nMismatch KPI distribution:")
+print(mismatch["kpi_status"].value_counts(dropna=False))
+
+print("\n17. Check whether mismatches are excluded from KPI:")
+
+incorrect = mismatch[mismatch["kpi_status"].ne("Excluded")]
+
+print("Mismatches not excluded:", len(incorrect))
+
+
+print("\n18. Exited employee recovery validation:")
+
+exited = df[
+    df["outcome"].eq("EXITED_LAPTOP_RECOVERY")
+]
+
+print("Recovery records:", len(exited))
+
+cols = [
+    "asset_id",
+    "snow_employee_id",
+    "employee_status",
+    "asset_status",
+    "return_date",
+    "exit_date",
+    "outcome",
+    "kpi_status",
+]
+
+cols = [col for col in cols if col in df.columns]
+
+if exited.empty:
+    print("No exited employee recovery records found.")
+else:
+    print(exited[cols].to_string(index=False))
+
+print("\nRecovery KPI distribution:")
+print(exited["kpi_status"].value_counts(dropna=False))
+
+print("\nRecovery records not excluded:")
+print((exited["kpi_status"] != "Excluded").sum())
+
+
+print("\n19. Stale device validation:")
+
+stale = df[df["outcome"].eq("STALE_REVALIDATE")]
+
+print("Stale records:", len(stale))
+
+if "days_since_check" in df.columns:
+    print(
+        "Records with age greater than 30 days:",
+        (stale["days_since_check"] > 30).sum()
+    )
+
+print("\nStale KPI distribution:")
+print(stale["kpi_status"].value_counts(dropna=False))
+
+print("\nStale compliance distribution:")
+print(stale["recomputed_compliance"].value_counts(dropna=False))
+
+print("\nStale records not marked Compliant in KPI:")
+print((stale["kpi_status"] != "Compliant").sum())

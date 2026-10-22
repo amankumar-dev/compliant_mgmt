@@ -7,5 +7,5 @@ KPI_DIST='sql/kpi_distribution.sql'
 COMPLIANCE_VALUE='sql/compliance_value.sql'
 
 # Compliance enriched schema
-run_query(COMPLIANCE_ENRICHED)
+run_query(KPI_DIST)
 

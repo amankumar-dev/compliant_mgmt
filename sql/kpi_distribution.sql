@@ -1,8 +1,8 @@
 SELECT
-    kpi_status,
     outcome,
+    kpi_status,
     COUNT(*) AS total_records
-FROM compliance_enriched
-WHERE dt='2026-10-06'
-GROUP BY kpi_status,outcome
-ORDER BY kpi_status,outcome DESC
+FROM compliance_analytics.compliance_enriched
+WHERE outcome = 'STALE_REVALIDATE'
+GROUP BY outcome, kpi_status
+ORDER BY kpi_status;
