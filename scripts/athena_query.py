@@ -1,4 +1,3 @@
-import argparse
 import time
 from pathlib import Path
 import boto3
@@ -27,7 +26,7 @@ def run_query(sql_file):
     response=athena.start_query_execution(
         QueryString=query,
         QueryExecutionContext={"Database":DATABASE,'Catalog':CATALOG},
-        Workgroup=WORKGROUP
+        WorkGroup=WORKGROUP
     )
     
     query_id=response['QueryExecutionId']
@@ -52,7 +51,7 @@ def run_query(sql_file):
         raise RuntimeError(f"Query {status}: {reason}")
 
     # Fetch Query result
-    paginator=athena.get_paginator('get_query_result')
+    paginator=athena.get_paginator('get_query_results')
     
     print("\nQuery Results:")
     
@@ -60,8 +59,4 @@ def run_query(sql_file):
         for row in page['ResultSet']['Rows']:
             values=[cell.get('VarCharValue','') for cell in row['Data']]
             print(" | ".join(values))
-            
-parser=argparse.ArgumentParser(description='Run any SQL file using Amazon Athena')
-parser.add_argument('sql_file',help='Path of the sql file to execute')
-args=parser.parse_args()
-run_query(args.sql_file)
+        
