@@ -1,16 +1,18 @@
+import sys
+import time
 
 import boto3
-import time
 import pandas as pd
 
 DATABASE = "compliance_analytics"
 REGION = "us-east-1"
 WORKGROUP = "primary"
 
-KPI_TABLE = "gold_kpi_summary"
-CONTROL_TABLE = "gold_summary"
+KPI_TABLE = "gold_kpi_summary_live"
+CONTROL_TABLE = "gold_summary_live"
 
 EXPECTED_DEVICES = 1200
+TOLERANCE = 0.02
 
 athena = boto3.client("athena", region_name=REGION)
 
@@ -20,6 +22,11 @@ def run_query(sql):
         QueryString=sql,
         QueryExecutionContext={"Database": DATABASE},
         WorkGroup=WORKGROUP,
+        ResultConfiguration={
+            "OutputLocation": (
+                "s3://amandataeng-compliance-de-2026/athena-results/"
+            )
+        },
     )
 
     query_id = response["QueryExecutionId"]
@@ -64,7 +71,10 @@ def run_query(sql):
     if not rows:
         return pd.DataFrame()
 
-    headers = [cell.get("VarCharValue", "") for cell in rows[0]["Data"]]
+    headers = [
+        cell.get("VarCharValue", "")
+        for cell in rows[0]["Data"]
+    ]
 
     data = [
         [cell.get("VarCharValue") for cell in row["Data"]]
@@ -75,133 +85,211 @@ def run_query(sql):
 
 
 def gold_validate():
+    failures = []
+
     print("=" * 55)
     print("GOLD DATA INTEGRITY VALIDATION")
     print("=" * 55)
 
+    # 1. KPI summary
     print("\n1. KPI summary validation")
 
-    kpi = run_query(
-        f"SELECT * FROM {KPI_TABLE}"
-    )
+    kpi = run_query(f"SELECT * FROM {KPI_TABLE}")
 
     if kpi.empty:
+        failures.append("KPI table returned no rows.")
         print("FAIL: KPI table returned no rows.")
     else:
-        kpi["total_device"] = pd.to_numeric(
-            kpi["total_device"], errors="coerce"
-        )
+        required_kpi_columns = {
+            "kpi_status", "total_device", "percentage"
+        }
 
-        total = kpi["total_device"].sum()
+        if not required_kpi_columns.issubset(kpi.columns):
+            failures.append("KPI table is missing required columns.")
+            print("FAIL: Missing KPI columns.")
+        else:
+            kpi["total_device"] = pd.to_numeric(
+                kpi["total_device"], errors="coerce"
+            )
+            kpi["percentage"] = pd.to_numeric(
+                kpi["percentage"], errors="coerce"
+            )
 
-        print("KPI records:", len(kpi))
-        print("Total devices:", total)
-        print("Expected devices:", EXPECTED_DEVICES)
-        print(
-            "Result:",
-            "PASS" if total == EXPECTED_DEVICES else "FAIL"
-        )
+            if kpi["total_device"].isna().any():
+                failures.append("KPI device counts contain invalid values.")
 
-        print("\nKPI distribution:")
-        print(kpi.to_string(index=False))
+            if (kpi["total_device"] < 0).any():
+                failures.append("KPI device counts contain negative values.")
 
+            total = kpi["total_device"].sum()
+
+            print("KPI records:", len(kpi))
+            print("Total devices:", total)
+            print("Expected devices:", EXPECTED_DEVICES)
+            print(kpi.to_string(index=False))
+
+            if total != EXPECTED_DEVICES:
+                failures.append(
+                    f"KPI total is {total}, expected {EXPECTED_DEVICES}."
+                )
+
+            if kpi["kpi_status"].isna().any():
+                failures.append("KPI status contains missing values.")
+
+            if kpi["kpi_status"].duplicated().any():
+                failures.append("KPI table has duplicate status rows.")
+
+            if kpi["percentage"].isna().any():
+                failures.append("KPI percentages contain invalid values.")
+            elif not (kpi["percentage"].between(0, 100).all()):
+                failures.append("KPI percentages fall outside 0-100.")
+
+            if not kpi["percentage"].isna().any():
+                pct_total = kpi["percentage"].sum()
+                print(f"KPI percentage total: {pct_total:.2f}%")
+
+                if abs(pct_total - 100.0) > TOLERANCE:
+                    failures.append(
+                        f"KPI percentages sum to {pct_total:.2f}%, not 100%."
+                    )
+
+    # 2. Control-wise summary
     print("\n2. Control-wise summary validation")
 
-    controls = run_query(
-        f"SELECT * FROM {CONTROL_TABLE}"
-    )
+    controls = run_query(f"SELECT * FROM {CONTROL_TABLE}")
 
     if controls.empty:
+        failures.append("Control summary table returned no rows.")
         print("FAIL: Control summary table returned no rows.")
-        return
+    else:
+        required_control_columns = {
+            "control_name",
+            "control_status",
+            "total_devices",
+            "percentage",
+        }
 
-    controls["total_devices"] = pd.to_numeric(
-        controls["total_devices"], errors="coerce"
-    )
+        if not required_control_columns.issubset(controls.columns):
+            failures.append(
+                "Control summary table is missing required columns."
+            )
+            print("FAIL: Missing control summary columns.")
+        else:
+            controls["total_devices"] = pd.to_numeric(
+                controls["total_devices"], errors="coerce"
+            )
+            controls["percentage"] = pd.to_numeric(
+                controls["percentage"], errors="coerce"
+            )
 
-    controls["percentage"] = pd.to_numeric(
-        controls["percentage"], errors="coerce"
-    )
+            if controls[
+                ["control_name", "control_status",
+                 "total_devices", "percentage"]
+            ].isna().any().any():
+                failures.append(
+                    "Control summary contains missing or invalid values."
+                )
 
-    expected_controls = {
-        "bitlocker",
-        "antivirus",
-        "patch",
-        "dlp",
-        "proxy",
-    }
+            if (controls["total_devices"] < 0).any():
+                failures.append(
+                    "Control summary contains negative device counts."
+                )
 
-    actual_controls = set(
-        controls["control_name"].str.lower().unique()
-    )
+            expected_controls = {
+                "bitlocker", "antivirus", "patch", "dlp", "proxy"
+            }
 
-    print("Controls found:", sorted(actual_controls))
-    print(
-        "All expected controls present:",
-        expected_controls.issubset(actual_controls)
-    )
+            actual_controls = set(
+                controls["control_name"].dropna().str.lower().unique()
+            )
 
-    print("\nDevice count by control:")
+            print("Controls found:", sorted(actual_controls))
 
-    count_check = controls.groupby(
-        controls["control_name"].str.lower()
-    )["total_devices"].sum()
+            missing_controls = expected_controls - actual_controls
 
-    for control, total in count_check.items():
-        result = "PASS" if total == EXPECTED_DEVICES else "FAIL"
+            if missing_controls:
+                failures.append(
+                    f"Missing controls: {sorted(missing_controls)}"
+                )
 
-        print(
-            f"{control}: {total} / {EXPECTED_DEVICES} - {result}"
-        )
+            unexpected_controls = actual_controls - expected_controls
 
-    print("\nPercentage total by control:")
+            if unexpected_controls:
+                failures.append(
+                    f"Unexpected controls: {sorted(unexpected_controls)}"
+                )
 
-    percentage_check = controls.groupby(
-        controls["control_name"].str.lower()
-    )["percentage"].sum()
+            duplicates = controls.duplicated(
+                subset=["control_name", "control_status"]
+            )
 
-    for control, total in percentage_check.items():
-        result = (
-            "PASS"
-            if 99.99 <= total <= 100.01
-            else "CHECK"
-        )
+            if duplicates.any():
+                failures.append(
+                    "Duplicate control-name/status combinations found."
+                )
+                print(
+                    controls.loc[
+                        duplicates,
+                        ["control_name", "control_status", "total_devices"],
+                    ].to_string(index=False)
+                )
 
-        print(f"{control}: {total:.2f}% - {result}")
+            print("\nDevice count and percentage by control:")
 
-    print("\n3. Duplicate control-status combinations")
+            for control, group in controls.groupby(
+                controls["control_name"].str.lower()
+            ):
+                total = group["total_devices"].sum()
+                pct_total = group["percentage"].sum()
 
-    duplicates = controls.duplicated(
-        subset=["control_name", "control_status"]
-    )
+                count_ok = total == EXPECTED_DEVICES
+                pct_ok = (
+                    pd.notna(pct_total)
+                    and abs(pct_total - 100.0) <= TOLERANCE
+                )
 
-    print("Duplicate combinations:", duplicates.sum())
+                print(
+                    f"{control}: devices={total}/{EXPECTED_DEVICES}, "
+                    f"percentage={pct_total:.2f}%"
+                )
 
-    if duplicates.any():
-        print(
-            controls.loc[
-                duplicates,
-                ["control_name", "control_status", "total_devices"],
-            ].to_string(index=False)
-        )
+                if not count_ok:
+                    failures.append(
+                        f"{control}: device count is {total}, "
+                        f"expected {EXPECTED_DEVICES}."
+                    )
 
-    print("\n4. Missing values")
+                if not pct_ok:
+                    failures.append(
+                        f"{control}: percentages sum to "
+                        f"{pct_total:.2f}%, expected 100%."
+                    )
 
-    print(
-        controls[
-            ["control_name", "control_status",
-             "total_devices", "percentage"]
-        ].isna().sum().to_string()
-    )
+            print("\nFinal control summary:")
+            print(
+                controls.sort_values(
+                    ["control_name", "control_status"]
+                ).to_string(index=False)
+            )
 
-    print("\n5. Final control summary")
-    print(
-        controls.sort_values(
-            ["control_name", "control_status"]
-        ).to_string(index=False)
-    )
+    print("\n" + "=" * 55)
 
-    print("\nGOLD VALIDATION FINISHED")
+    if failures:
+        print("GOLD VALIDATION FAILED")
+        for number, failure in enumerate(failures, start=1):
+            print(f"{number}. {failure}")
+
+        return False
+
+    print("GOLD VALIDATION SUCCESSFUL")
+    print("All Gold integrity checks passed.")
+    return True
 
 
-gold_validate()
+if __name__ == "__main__":
+    try:
+        success = gold_validate()
+        sys.exit(0 if success else 1)
+    except Exception as exc:
+        print(f"GOLD VALIDATION ERROR: {exc}")
+        sys.exit(1)

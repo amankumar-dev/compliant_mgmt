@@ -1,9 +1,37 @@
 
+import io
+import os
+import boto3
 import pandas as pd
+
+BUCKET = "amandataeng-compliance-de-2026"
+REGION = "us-east-1"
+DT = "2026-10-06"
+
+S3_KEY = (
+    f"silver/compliance_enriched/dt={DT}/"
+    "compliance_enriched.parquet"
+)
 
 FILE = "data/compliance_enriched.parquet"
 
-df = pd.read_parquet(FILE)
+os.makedirs("data", exist_ok=True)
+
+s3 = boto3.client("s3", region_name=REGION)
+
+response = s3.get_object(
+    Bucket=BUCKET,
+    Key=S3_KEY
+)
+
+df = pd.read_parquet(
+    io.BytesIO(response["Body"].read())
+)
+
+df.to_parquet(FILE, index=False)
+
+print(f"Loaded current Silver data: s3://{BUCKET}/{S3_KEY}")
+print(f"Rows loaded: {len(df):,}")
 
 print("=" * 55)
 print("SILVER DATA INTEGRITY VALIDATION")
@@ -242,3 +270,112 @@ print(stale["recomputed_compliance"].value_counts(dropna=False))
 
 print("\nStale records not marked Compliant in KPI:")
 print((stale["kpi_status"] != "Compliant").sum())
+
+
+# =======================================================
+# STRICT VALIDATION GATE
+# =======================================================
+
+print("\n" + "=" * 55)
+print("STRICT SILVER VALIDATION GATE")
+print("=" * 55)
+
+errors = []
+
+# 1. Dataset must not be empty
+if df.empty:
+    errors.append("Silver dataset is empty.")
+
+# 2. Asset IDs must exist and be unique
+if df["asset_id"].isna().any():
+    errors.append("Missing asset_id values found.")
+
+if df["asset_id"].duplicated().any():
+    errors.append("Duplicate asset_id values found.")
+
+# 3. Critical columns must not contain null values
+required_columns = [
+    "recomputed_compliance",
+    "failed_checks",
+    "unknown_checks",
+    "outcome",
+    "kpi_status",
+]
+
+for column in required_columns:
+    if column not in df.columns:
+        errors.append(f"Required column missing: {column}")
+    elif df[column].isna().any():
+        errors.append(f"Null values found in {column}.")
+
+# 4. Check counts cannot be negative
+for column in ["failed_checks", "unknown_checks"]:
+    if column in df.columns:
+        if (df[column] < 0).any():
+            errors.append(f"Negative values found in {column}.")
+
+# 5. KPI statuses must be valid
+allowed_kpi_statuses = {
+    "Compliant",
+    "Non-Compliant",
+    "Excluded",
+}
+
+if "kpi_status" in df.columns:
+    invalid = set(df["kpi_status"].dropna().unique()) - allowed_kpi_statuses
+
+    if invalid:
+        errors.append(f"Invalid KPI statuses: {sorted(invalid)}")
+
+# 6. Every asset must have a valid outcome
+allowed_outcomes = {
+    "REMEDIATE",
+    "STALE_REVALIDATE",
+    "REVIEW_UNKNOWN_CONTROLS",
+    "INACTIVE_DEVICE",
+    "ASSET_ID_MISMATCH",
+    "EXITED_LAPTOP_RECOVERY",
+    "REVIEW_NO_OWNER",
+    "UNMANAGED_REVIEW",
+}
+
+if "outcome" in df.columns:
+    invalid = set(df["outcome"].dropna().unique()) - allowed_outcomes
+
+    if invalid:
+        errors.append(f"Invalid outcomes: {sorted(invalid)}")
+
+# 7. Excluded business outcomes must not enter compliance KPIs
+excluded_outcomes = {
+    "INACTIVE_DEVICE",
+    "ASSET_ID_MISMATCH",
+    "EXITED_LAPTOP_RECOVERY",
+    "REVIEW_UNKNOWN_CONTROLS",
+    "REVIEW_NO_OWNER",
+    "UNMANAGED_REVIEW",
+}
+
+if {"outcome", "kpi_status"}.issubset(df.columns):
+    bad_exclusions = df[
+        df["outcome"].isin(excluded_outcomes)
+        & (df["kpi_status"] != "Excluded")
+    ]
+
+    if not bad_exclusions.empty:
+        errors.append(
+            f"{len(bad_exclusions)} excluded-outcome records "
+            "have incorrect KPI status."
+        )
+
+# Final result
+if errors:
+    print("\nVALIDATION FAILED")
+
+    for number, error in enumerate(errors, start=1):
+        print(f"{number}. {error}")
+
+    raise SystemExit(1)
+
+print("PASS: All strict validation checks passed.")
+print(f"Validated records: {len(df):,}")
+print("VALIDATION SUCCESSFUL")
