@@ -19,4 +19,4 @@ for col in df.columns:
     
 print(df)
 
-
+#"D:\Aman\aman.code\dataengproject\retail_mgmt_aws\key.pem"
